@@ -1,0 +1,41 @@
+plugins {
+    id 'java'
+    id 'groovy'
+    id 'idea'
+    id 'net.ltgt.apt' version '0.5'
+    id "me.champeau.gradle.jmh" version "0.2.0"
+}
+
+group 'at.softwarecraftsmen'
+version '1.0-SNAPSHOT'
+
+
+ext {
+    javaLanguageLevel = JavaVersion.VERSION_1_8
+}
+
+sourceCompatibility = rootProject.javaLanguageLevel
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testCompile 'org.codehaus.groovy:groovy-all:2.4.5'
+    testCompile group: 'junit', name: 'junit', version: '4.12'
+    testCompile "org.spockframework:spock-spring:1.0-groovy-2.4"
+    testCompile 'org.springframework:spring-test:4.2.4.RELEASE'
+
+    compile 'org.projectlombok:lombok:1.16.6'
+    compile 'joda-time:joda-time:2.3'
+    compile 'org.apache.commons:commons-lang3:3.3.2'
+    compile 'org.springframework:spring-context:4.2.4.RELEASE'
+
+
+    compile 'org.mapstruct:mapstruct-jdk8:1.0.0.Final'
+    compile 'org.modelmapper:modelmapper:0.7.5'
+    compile 'net.sf.dozer:dozer:5.4.0'
+
+    apt 'org.mapstruct:mapstruct-processor:1.0.0.Final'
+}
+

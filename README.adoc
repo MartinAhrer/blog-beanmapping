@@ -1,0 +1,169 @@
+= Bean Mapping of Transfer Objects
+Martin Ahrer <martin.ahrer@software-craftsmen.at>
+2016-03-08
+:jbake-type: post
+:jbake-status: published
+:jbake-tags: microbenchmark, mapping
+:idprefix:
+
+
+In the past years I have been working on multiple projects where the so-called *Data Transfer Object*
+(short DTO) pattern has been heavily used. This is a pattern that has even been a http://www.oracle.com/technetwork/java/transferobject-139757.html[core pattern] in the
+JEE world.
+This pattern certainly has its justification for the right cases. But in many cases I have seen
+it applied inappropriately. This http://www.adam-bien.com/roller/abien/entry/dto_the_exceptions_from_the[blog posting] by Adam Bien, a JEE advocate, is outlining the case where it should be considered useful.
+However when applied, this pattern comes at the cost of additional code to maintain and some extra CPU cycles for doing the mapping.
+
+In this post we take a brief look at some mapping frameworks (just enough to do simple bean mapping). Finally we do some simple benchmarking just
+to get an idea what the performance costs of bean mapping are.
+
+Below we see a typical implementation of mapping two objects. It becomes quite evident that every time we add/remove an attribute to the source or target object we need to update the mapping implementation.
+So a complex domain model and over-use of the mapping pattern can keep a developer fairly busy.
+
+.A hand crafted bean mapping implementation
+[source,java]
+--
+public class PersonNameMapperImpl implements PersonNameMapper {
+
+    @Override
+    public PersonNameResource map(PersonName person) {
+        if ( person == null ) {
+            return null;
+        }
+
+        PersonNameResource personNameResource = new PersonNameResource();
+
+        personNameResource.setNamePrefix( person.getNamePrefix() );
+        personNameResource.setFirstName( person.getFirstName() );
+        personNameResource.setLastName( person.getLastName() );
+        personNameResource.setMiddleName( person.getMiddleName() );
+
+        return personNameResource;
+    }
+}
+--
+
+As a workaround quite a number of mapping frameworks have been put into life.
+They mostly work based on heavy use of the Java Reflection API in order to dynamically map between two objects (or even complex object networks).
+These frameworks let us describe the rules for mapping and/or rely on sensible defaults for deriving a mapping (e.g. based on name matching).
+
+The most popular frameworks are probably http://dozer.sourceforge.net/documentation/about.html[Dozer] or http://modelmapper.org/[Model Mapper].
+
+.Bean mapping based on Dozer
+[source,java]
+--
+PersonName name = new PersonNameFactory().newEntity();
+Mapper dozerMapper = new DozerBeanMapper();
+dozerMapper.map(name, PersonNameResource.class);
+--
+The above mapping code using Dozer simply uses name matching for generating property mapping rules using the Reflection API.
+It is quite evident that it is required to have good test coverage for such code to ensure that all properties are properly mapped.
+
+.Bean mapping based on ModelMapper
+[source,java]
+--
+PersonName name = new PersonNameFactory().newEntity();
+ModelMapper modelMapper = new ModelMapper();
+modelMapper.map(name, PersonNameResource.class);
+--
+
+Using ModelMapper the code is almost identical. Most of the well established mapping frameworks are doing
+an excellent job providing their mapping capabilities. Certainly they differ in the way the are configured through
+an API and/or annotations (or even XML). So choosing may be just a matter of taste.
+
+During one of my last project assignments I had an argument with a colleague. The more mapping code we had implemented the more I felt uneasy.
+Yes, I had a pretty old development workstation with a CPU not as powerful compared to my team mates.
+
+I started arguing that we are putting a lot of work into code for configuring the mapping framework and it was hard to debug (It's all Reflection code you need to work through when debugging).
+But also with my poor hardware I was experiencing that automated tests would run quite slow (and extremely slow when in debugger mode) and to me it was pretty clear that it's the mapping framework.
+Granted, it definitely helped us to avoid writing tons of boring mapping code but I still feared that it would come at some performance cost.
+Though, having no reliable numbers for the execution costs, I knew it would be hard to find good arguments against the mapping framework we had chosen.
+
+Today, the project is almost done, the mapping approach using *ModelMapper* was continued. Still that questionable performance continued to puzzle me.
+So, a few days ago I sat down and setup a sample project to compare a few mapping frameworks and run some benchmarks.
+It is quite clear that a hand-crafted mapping code would outnumber any reflection based mapping implementation. Yet I have to admit
+that hand-crafted mapping code is not a viable option. The improvement in performance would be neutralized by unmaintainable code.
+
+So, first I did a research to find a mapping framework that would not use the Reflection API at runtime but rather generate the mapping code.
+I was successful and stumbled over a fairly new project: http://mapstruct.org/[mapstruct].
+It is still missing some features (like field access) and it has its problems with https://projectlombok.org/[Lombok] (which we use for reducing boiler plate code).
+
+.Bean mapping based on mapstruct
+[source,java]
+--
+@Mapper
+public interface PersonNameMapper {
+    PersonNameMapper INSTANCE = Mappers.getMapper(PersonNameMapper.class);
+
+    PersonNameResource map(PersonName person);
+}
+--
+
+Mapstruct works with an annotation processor (apt) to actually generate Java code for the mapping.
+As a developer you just declare the mapper interface, annotate it with `@Mapper` and mapstruct generates the implementation based on an convention over configuration approach at compile time.
+The "hand-crafted" mapping code we saw earlier is in fact generated by mapstruct.
+
+[source,java]
+--
+PersonName name = new PersonNameFactory().newEntity();
+PersonNameMapper mapstructMapper = PersonNameMapper.INSTANCE;
+mapstructMapper.map(name);
+--
+
+So this aproach would get me the best of both worlds - good performance and no need to write mapping code.
+Next up, we have to get some numbers and arm our arguments towards non-reflection based mapping.
+
+The OpenJDK project has published their http://openjdk.java.net/projects/code-tools/jmh/[JMH micro-benchmarking] framework which they use for their performance improvements.
+
+.JMH benchmark
+[source,java]
+--
+public class PersonNameMappingBenchmark {
+
+    private static final PersonName name = new PersonNameFactory().newEntity();
+
+    private static final PersonNameMapper mapstructMapper = PersonNameMapper.INSTANCE;
+
+    @Benchmark
+    @BenchmarkMode(Mode.SampleTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public void mapstruct() throws InterruptedException {
+        mapstructMapper.map(name);
+    }
+
+    private static ModelMapper modelMapper = new ModelMapper();
+
+    @Benchmark
+    @BenchmarkMode(Mode.SampleTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public void modelmapper() throws InterruptedException {
+        modelMapper.map(name, PersonNameResource.class);
+    }
+
+    private static Mapper dozerMapper = new DozerBeanMapper();
+
+    @Benchmark
+    @BenchmarkMode(Mode.SampleTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public void dozer() throws InterruptedException {
+        dozerMapper.map(name, PersonNameResource.class);
+    }
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(PersonNameMappingBenchmark.class.getSimpleName())
+                .warmupIterations(5)
+                .measurementIterations(5)
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+    }
+}
+--
+
+As I don't want to pick on any of the Reflection API based frameworks I don't publish the results here.
+I suggest that you checkout the project at GitHub und get your numbers yourself.
+
+Obviously the solution based on explicit mapping code will outperform their Reflection API based sisters - that should come with no surprise.
+Also, the results from this should not be an argument towards blindly applying the DTO pattern.
